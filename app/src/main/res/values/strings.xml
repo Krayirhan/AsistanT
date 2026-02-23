@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">asistanT</string>
+    <string name="app_name">ATLAS</string>
+    <string name="asistan_wp_service_desc">WhatsApp mesajlarini onayladiginizda otomatik gonderir.</string>
 </resources>

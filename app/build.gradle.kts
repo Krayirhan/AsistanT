@@ -37,6 +37,12 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            pickFirsts += "**/*.so"
+            excludes += "META-INF/INDEX.LIST"
+        }
+    }
 }
 
 dependencies {
@@ -55,6 +61,7 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.okhttp)
     implementation(libs.androidx.datastore.preferences)
+    implementation("com.alphacephei:vosk-android:0.3.47")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,42 +35,40 @@ fun LightScreen(
     val scope = rememberCoroutineScope()
     var debounceJob by remember { mutableStateOf<Job?>(null) }
 
-    LaunchedEffect(status.lightBrightness) {
-        brightness = status.lightBrightness
-    }
+    LaunchedEffect(status.lightBrightness) { brightness = status.lightBrightness }
 
     val bulbColor by animateColorAsState(
-        targetValue = if (status.lightOn) Color(0xFFFFD600) else Color(0xFF555555),
-        animationSpec = tween(400),
-        label = "bulb_color"
+        targetValue = if (status.lightOn) Color(0xFFFFD600) else MaterialTheme.colorScheme.onSurfaceVariant.copy(0.3f),
+        animationSpec = tween(400), label = "bulb_color"
     )
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("💡 Ampul Kontrolü", color = Color.White) },
+                title = { Text("Ampul Kontrolü") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F0F1A))
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             )
         },
-        containerColor = Color(0xFF0F0F1A)
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 20.dp)
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // Ampul İkonu
+            // Ampul ikonu
             Icon(
                 imageVector = Icons.Filled.EmojiObjects,
                 contentDescription = "Ampul",
@@ -79,9 +78,8 @@ fun LightScreen(
 
             Text(
                 text = if (status.lightOn) "Açık" else "Kapalı",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 20.sp, fontWeight = FontWeight.SemiBold
             )
 
             // Toggle Switch
@@ -90,72 +88,98 @@ fun LightScreen(
                 onCheckedChange = { viewModel.toggleLight() },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
-                    checkedTrackColor = Color(0xFF7C3AED),
-                    uncheckedThumbColor = Color.Gray,
-                    uncheckedTrackColor = Color(0xFF2A2A2A)
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                 ),
                 modifier = Modifier.size(width = 80.dp, height = 40.dp)
             )
 
-            HorizontalDivider(color = Color.White.copy(0.1f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            // Parlaklık
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("☀️ Parlaklık", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                    Text("$brightness%", color = Color(0xFF7C3AED), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(8.dp))
-                Slider(
-                    value = brightness.toFloat(),
-                    onValueChange = { value ->
-                        brightness = value.toInt()
-                        debounceJob?.cancel()
-                        debounceJob = scope.launch {
-                            delay(500)
-                            viewModel.setLightBrightness(brightness)
-                        }
-                    },
-                    valueRange = 1f..100f,
-                    enabled = status.lightOn,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFF7C3AED),
-                        activeTrackColor = Color(0xFF7C3AED),
-                        inactiveTrackColor = Color(0xFF2A2A2A)
+            // Parlaklik
+            Card(
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Parlaklık", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("$brightness%", color = MaterialTheme.colorScheme.primary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Slider(
+                        value = brightness.toFloat(),
+                        onValueChange = { value ->
+                            brightness = value.toInt()
+                            debounceJob?.cancel()
+                            debounceJob = scope.launch { delay(500); viewModel.setLightBrightness(brightness) }
+                        },
+                        valueRange = 1f..100f, enabled = status.lightOn,
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
                     )
-                )
+                }
             }
 
-            HorizontalDivider(color = Color.White.copy(0.1f))
-
-            // Renk Seçici
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "🎨 Renk Seç",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(Modifier.height(12.dp))
-                ColorPickerGrid(
-                    selectedColor = status.lightColor,
-                    onColorSelected = { renk ->
-                        if (status.lightOn) {
-                            viewModel.setLightColor(renk, brightness)
+            // Preset Modlar
+            Card(
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Preset Modlar", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        data class Preset(val label: String, val renk: String, val pct: Int)
+                        val presets = listOf(
+                            Preset("Gece", "turuncu", 15),
+                            Preset("Film", "mor", 40),
+                            Preset("Çalışma", "beyaz", 100),
+                            Preset("Okuma", "sıcak beyaz", 70),
+                        )
+                        presets.forEach { preset ->
+                            Button(
+                                onClick = {
+                                    if (status.lightOn) { viewModel.setLightColor(preset.renk, preset.pct); brightness = preset.pct }
+                                },
+                                modifier = Modifier.weight(1f), enabled = status.lightOn,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(0.15f),
+                                    contentColor = MaterialTheme.colorScheme.primary,
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(0.5f)
+                                ),
+                                contentPadding = PaddingValues(4.dp)
+                            ) { Text(preset.label, fontSize = 11.sp, maxLines = 1) }
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (!status.lightOn) {
-                    Text(
-                        "⚠️ Renk seçmek için ampulu açın",
-                        color = Color.Yellow.copy(0.7f),
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 8.dp)
+                    }
+                }
+            }
+
+            // Renk secici
+            Card(
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Renk Seç", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(12.dp))
+                    ColorPickerGrid(
+                        selectedColor = status.lightColor,
+                        onColorSelected = { renk -> if (status.lightOn) viewModel.setLightColor(renk, brightness) },
+                        modifier = Modifier.fillMaxWidth()
                     )
+                    if (!status.lightOn) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Renk seçmek için ampulü açın",
+                            color = Color(0xFFFFA726), fontSize = 12.sp
+                        )
+                    }
                 }
             }
 
@@ -163,4 +187,3 @@ fun LightScreen(
         }
     }
 }
-

@@ -1,9 +1,9 @@
 package com.example.asistant.screens
 
 import android.content.Intent
+import android.media.MediaPlayer
 import android.speech.RecognizerIntent
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.asistant.providers.AssistantViewModel
+import com.example.asistant.services.ApiService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -51,31 +52,25 @@ fun VoiceScreen(
     var lastRecognized by remember { mutableStateOf("") }
     var lastResponse by remember { mutableStateOf("") }
     var isActive by remember { mutableStateOf(false) }
-
-    // Döngüsel referanssız yeniden başlatma sinyali
     var restartListening by remember { mutableStateOf(0) }
 
-    // TTS
-    var ttsInstance by remember { mutableStateOf<TextToSpeech?>(null) }
+    // Backend Piper TTS (erkek ses)
+    val api = remember { ApiService.getInstance(context) }
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
     DisposableEffect(Unit) {
-        val t = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                ttsInstance?.language = Locale("tr", "TR")
-            }
+        onDispose {
+            mediaPlayer?.release()
+            mediaPlayer = null
         }
-        ttsInstance = t
-        onDispose { t.stop(); t.shutdown() }
     }
 
-    // STT launcher — kendi içinde referans vermeden sadece state değiştirir
     val speechLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (!isActive) return@rememberLauncherForActivityResult
         val text = if (result.resultCode == android.app.Activity.RESULT_OK)
-            result.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()?.trim() ?: ""
+            result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim() ?: ""
         else ""
 
         if (text.isNotBlank()) {
@@ -84,12 +79,10 @@ fun VoiceScreen(
             statusText = "Düşünüyor..."
             viewModel.sendMessage(text)
         } else {
-            // Boş sonuç → tekrar dinle sinyali
             restartListening++
         }
     }
 
-    // Restart sinyali gelince yeniden dinle
     LaunchedEffect(restartListening) {
         if (restartListening > 0 && isActive) {
             delay(300)
@@ -108,61 +101,73 @@ fun VoiceScreen(
         }
     }
 
-    // AI yanıtı gelince TTS → bitince tekrar dinle
     LaunchedEffect(chatHistory.size, isLoading) {
         if (!isLoading && isActive && voiceState == VoiceState.PROCESSING) {
             val msg = chatHistory.lastOrNull { !it.isUser && !it.isLoading }
             if (msg != null && msg.content != lastResponse) {
                 lastResponse = msg.content
-                val clean = msg.content.replace(Regex("[*_`#>]"), "").trim()
+                val clean = msg.content.replace(Regex("[*_`#>]"), "")
+                    .replace(Regex("\\p{So}"), "")
+                    .trim().take(500)
                 voiceState = VoiceState.SPEAKING
                 statusText = "Konuşuyor..."
-                val t = ttsInstance
-                if (t != null) {
-                    t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                        override fun onStart(id: String?) {}
-                        override fun onDone(id: String?) {
-                            scope.launch {
-                                delay(600)
-                                if (isActive) restartListening++
-                            }
+
+                // Backend Piper TTS ile seslendir
+                try {
+                    val wavBytes = api.tts(clean)
+                    if (wavBytes != null) {
+                        mediaPlayer?.release()
+                        val tmpFile = java.io.File.createTempFile("voice_tts_", ".wav", context.cacheDir)
+                        tmpFile.writeBytes(wavBytes)
+                        val mp = MediaPlayer()
+                        mediaPlayer = mp
+                        mp.setDataSource(tmpFile.absolutePath)
+                        mp.setOnCompletionListener {
+                            it.release()
+                            tmpFile.delete()
+                            mediaPlayer = null
+                            scope.launch { delay(600); if (isActive) restartListening++ }
                         }
-                        override fun onError(id: String?) {
+                        mp.setOnErrorListener { p, _, _ ->
+                            p.release()
+                            tmpFile.delete()
+                            mediaPlayer = null
                             scope.launch { if (isActive) restartListening++ }
+                            true
                         }
-                    })
-                    t.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "tts1")
-                } else {
-                    delay(1000)
-                    if (isActive) restartListening++
+                        mp.prepare()
+                        mp.start()
+                    } else {
+                        // Backend TTS ulaşılamıyor — sessiz devam
+                        delay(1000); if (isActive) restartListening++
+                    }
+                } catch (e: Exception) {
+                    Log.w("VoiceScreen", "TTS hatası: ${e.message}")
+                    delay(1000); if (isActive) restartListening++
                 }
             }
         }
     }
 
-    // Pulse animasyonu
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulse by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = if (voiceState == VoiceState.LISTENING) 1.3f else 1f,
-        animationSpec = infiniteRepeatable(
-            tween(900, easing = FastOutSlowInEasing),
-            RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "pulse"
     )
 
     val micColor = when (voiceState) {
-        VoiceState.LISTENING  -> Color(0xFF7C3AED)
+        VoiceState.LISTENING  -> MaterialTheme.colorScheme.primary
         VoiceState.PROCESSING -> Color(0xFFFF9800)
-        VoiceState.SPEAKING   -> Color(0xFF4CAF50)
-        VoiceState.IDLE       -> Color(0xFF2A2A3E)
+        VoiceState.SPEAKING   -> MaterialTheme.colorScheme.tertiary
+        VoiceState.IDLE       -> MaterialTheme.colorScheme.surfaceVariant
     }
     val statusColor = when (voiceState) {
-        VoiceState.LISTENING  -> Color(0xFF7C3AED)
+        VoiceState.LISTENING  -> MaterialTheme.colorScheme.primary
         VoiceState.PROCESSING -> Color(0xFFFF9800)
-        VoiceState.SPEAKING   -> Color(0xFF4CAF50)
-        VoiceState.IDLE       -> Color.Gray
+        VoiceState.SPEAKING   -> MaterialTheme.colorScheme.tertiary
+        VoiceState.IDLE       -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     fun startSession() {
@@ -181,7 +186,8 @@ fun VoiceScreen(
 
     fun stopSession() {
         isActive = false
-        ttsInstance?.stop()
+        mediaPlayer?.release()
+        mediaPlayer = null
         voiceState = VoiceState.IDLE
         statusText = "Başlamak için mikrofona dokun"
     }
@@ -189,31 +195,28 @@ fun VoiceScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("🎙️ Canlı Konuşma", color = Color.White) },
+                title = { Text("Canlı Konuşma") },
                 navigationIcon = {
                     IconButton(onClick = { stopSession(); onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Geri", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Geri")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F0F1A))
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             )
         },
-        containerColor = Color(0xFF0F0F1A)
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .navigationBarsPadding(),
+            modifier = Modifier.fillMaxSize().padding(padding).navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Konuşma kartları
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 24.dp, vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -221,12 +224,12 @@ fun VoiceScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(Color(0xFF7C3AED).copy(alpha = 0.15f))
+                        colors = CardDefaults.cardColors(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
                     ) {
                         Column(Modifier.padding(16.dp)) {
-                            Text("Siz", color = Color(0xFF7C3AED), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Siz", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(4.dp))
-                            Text(lastRecognized, color = Color.White, fontSize = 16.sp)
+                            Text(lastRecognized, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp)
                         }
                     }
                     Spacer(Modifier.height(12.dp))
@@ -235,48 +238,43 @@ fun VoiceScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(Color(0xFF1E293B))
+                        colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(16.dp)) {
-                            Text("AI", color = Color(0xFF4CAF50), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("AI", color = MaterialTheme.colorScheme.tertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                lastResponse.take(300) + if (lastResponse.length > 300) "…" else "",
-                                color = Color.White, fontSize = 15.sp
+                                lastResponse.take(300) + if (lastResponse.length > 300) "..." else "",
+                                color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp
                             )
                         }
                     }
                 }
                 if (lastRecognized.isBlank() && lastResponse.isBlank()) {
-                    Text("🎙️", fontSize = 64.sp, textAlign = TextAlign.Center)
+                    Icon(
+                        Icons.Filled.Mic, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.2f),
+                        modifier = Modifier.size(80.dp)
+                    )
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "AI ile sesli konuş\nTürkçe komutlar, ampul & TV kontrolü",
-                        color = Color.White.copy(0.4f), fontSize = 14.sp,
-                        textAlign = TextAlign.Center
+                        "AI ile sesli konuş\nTürkçe komutlar, ampul ve TV kontrolü",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.6f),
+                        fontSize = 14.sp, textAlign = TextAlign.Center
                     )
                 }
             }
 
             // Mikrofon butonu + pulse
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.padding(vertical = 24.dp)
-            ) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 24.dp)) {
                 if (voiceState == VoiceState.LISTENING) {
                     Box(
-                        modifier = Modifier
-                            .size(190.dp)
-                            .scale(pulse)
-                            .clip(CircleShape)
-                            .background(Color(0xFF7C3AED).copy(alpha = 0.10f))
+                        modifier = Modifier.size(190.dp).scale(pulse).clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
                     )
                     Box(
-                        modifier = Modifier
-                            .size(145.dp)
-                            .scale(pulse)
-                            .clip(CircleShape)
-                            .background(Color(0xFF7C3AED).copy(alpha = 0.16f))
+                        modifier = Modifier.size(145.dp).scale(pulse).clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
                     )
                 }
                 FloatingActionButton(
@@ -295,7 +293,6 @@ fun VoiceScreen(
                 }
             }
 
-            // Durum metni
             Text(
                 text = statusText,
                 color = statusColor,
